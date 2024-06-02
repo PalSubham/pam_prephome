@@ -67,8 +67,39 @@ pam_sm_open_session (pam_handle_t *pamh, int flags, int argc, const char **argv)
     const void *user;
     const struct passwd *pwd;
     struct stat St;
+    char *storage;
     
     parse_args(pamh, flags, argc, argv, &opt);
+
+    /* get username */
+    retval = pam_get_item(pamh, PAM_USER, &user);
+    if (retval != PAM_SUCCESS || user == NULL || *(const char *)user == '\0')
+    {
+        pam_syslog(pamh, LOG_NOTICE, "Cannot obtain username");
+        return PAM_USER_UNKNOWN;
+    }
+
+    /* get password */
+    pwd = pam_modutil_getpwnam(pamh, (const char *)user);
+    if (pwd == NULL)
+    {
+        pam_syslog(pamh, LOG_NOTICE, "User unknown.");
+        return PAM_USER_UNKNOWN;
+    }
+
+    /* stat home and storage directory */
+    strcpy(storage, opt.storage);
+    strcat(storage, pwd->pw_dir);
+    if (stat(pwd->pw_dir, &St) == 0 && stat((const char *)storage, &St) == 0)
+    {
+        if (opt.ctrl & PREPHOME_DEBUG)
+        {
+            pam_syslog(pamh, LOG_DEBUG, "Home directory %s & storage directory %s already exists", pwd->pw_dir, storage);
+        }
+        return PAM_SUCCESS;
+    }
+
+    return create_homes(pamh, &opt, user, &pwd);
 }
 
 int
