@@ -1,5 +1,7 @@
 #include <sys/stat.h>
 #include <pwd.h>
+#include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
@@ -12,8 +14,7 @@
 #include "prephome_config.h"
 
 
-
-void
+static void
 parse_args (const pam_handle_t *pamh, int flags, int argc, const char **argv, options_t *opt)
 {
     opt->ctrl = 0;
@@ -57,6 +58,21 @@ parse_args (const pam_handle_t *pamh, int flags, int argc, const char **argv, op
     }
 
     return;
+}
+
+static char *
+umask_to_mode (const char *umask)
+{
+    char str_mode[5];
+
+    (void) snprintf(str_mode, sizeof(str_mode), "0%o", 0777 & ~strtoul(umask, NULL, 8));
+    return strdup((const char *) str_mode);
+}
+
+static int
+create_homes (pam_handle_t *pamh, options_t *opt, const char *user, const struct passwd *pwd)
+{
+
 }
 
 int
