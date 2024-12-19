@@ -1,6 +1,7 @@
 #include <sys/stat.h>
 #include <pwd.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,7 +30,7 @@ parse_args (const pam_handle_t *pamh, int flags, int argc, const char **argv, op
 
     for (; argc-- > 0; ++argv)
     {
-        const char *str;
+        char *str;
 
         if (!strcmp(*argv, "silent"))
         {
@@ -69,10 +70,82 @@ umask_to_mode (const char *umask)
     return strdup((const char *) str_mode);
 }
 
+static bool
+is_home_owner (const struct stat *St, const struct passwd *pwd)
+{
+    return St->st_uid == pwd->pw_uid && St->st_gid == pwd->pw_gid;
+}
+
+static bool
+is_home_permission (const pam_handle_t *pamh, const struct stat *St, const options_t *opt)
+{   
+    char *login_umask = NULL;
+    char *login_homemode = NULL;
+    bool result;
+
+    if (opt->umask == NULL)
+    {
+        login_umask = pam_modutil_search_key(pamh, LOGIN_DEFS, "UMASK");
+        login_homemode = pam_modutil_search_key(pamh, LOGIN_DEFS, "HOME_MODE");
+
+        if (login_homemode == NULL)
+        {
+            if (login_umask != NULL)
+            {
+                login_homemode = umask_to_mode(login_umask);
+            }
+            else
+            {
+                login_homemode = umask_to_mode(UMASK_DEFAULT);
+            }
+        }
+    }
+    else
+    {
+        login_homemode = umask_to_mode(opt->umask);
+    }
+
+    result = St->st_mode & 0777 == (int) strtoul(login_homemode, NULL, 8);
+
+    free(login_umask);
+    free(login_homemode);
+
+    return result;
+}
+
+static bool
+is_home_ok (const pam_handle_t *pamh, const struct stat *St, const struct passwd *pwd, const options_t *opt)
+{
+    return S_ISDIR(St->st_mode) && is_home_owner(St, pwd) && is_home_permission(pamh, St, opt);
+}
+
 static int
 create_homes (pam_handle_t *pamh, options_t *opt, const char *user, const struct passwd *pwd)
 {
+    struct stat St_home, St_storage;
+    char *storage;
+    int home_status, storage_status;
 
+    if ((home_status = (pwd->pw_dir, &St_home)) == 0)
+    {
+        if (!is_home_ok(pamh, &St_home, pwd, &opt))
+        {
+            pam_syslog(pamh, LOG_ERR, "Something exists at home directory location, not touching it");
+            return PAM_ERROR_MSG;
+        }
+    }
+
+    strcpy(storage, opt->storage);
+    strcat(storage, pwd->pw_dir);
+
+    if ((storage_status = ((const char *)storage, &St_storage)) == 0)
+    {
+        if (!is_home_ok(pamh, &St_storage, pwd, &opt))
+        {
+            pam_syslog(pamh, LOG_ERR, "Something exists at storage directory location, not touching it");
+            return PAM_ERROR_MSG;
+        }
+    }
 }
 
 int
@@ -80,42 +153,44 @@ pam_sm_open_session (pam_handle_t *pamh, int flags, int argc, const char **argv)
 {
     int retval;
     options_t opt;
-    const void *user;
-    const struct passwd *pwd;
-    struct stat St;
+    void *user;
+    struct passwd *pwd;
+    struct stat St_home, St_storage;
     char *storage;
     
     parse_args(pamh, flags, argc, argv, &opt);
 
     /* get username */
     retval = pam_get_item(pamh, PAM_USER, &user);
-    if (retval != PAM_SUCCESS || user == NULL || *(const char *)user == '\0')
+    if (retval != PAM_SUCCESS || user == NULL || *(const char *) user == '\0')
     {
-        pam_syslog(pamh, LOG_NOTICE, "Cannot obtain username");
+        pam_syslog(pamh, LOG_ERR, "Cannot obtain username");
         return PAM_USER_UNKNOWN;
     }
 
-    /* get password */
+    /* get user info */
     pwd = pam_modutil_getpwnam(pamh, (const char *)user);
     if (pwd == NULL)
     {
-        pam_syslog(pamh, LOG_NOTICE, "User unknown.");
+        pam_syslog(pamh, LOG_ERR, "User unknown.");
         return PAM_USER_UNKNOWN;
     }
 
     /* stat home and storage directory */
     strcpy(storage, opt.storage);
     strcat(storage, pwd->pw_dir);
-    if (stat(pwd->pw_dir, &St) == 0 && stat((const char *)storage, &St) == 0)
+
+    if (stat(pwd->pw_dir, &St_home) == 0 && is_home_ok(pamh, &St_home, pwd, &opt) && stat((const char *)storage, &St_storage) == 0 && is_home_ok(pamh, &St_storage, pwd, &opt))
     {
         if (opt.ctrl & PREPHOME_DEBUG)
         {
-            pam_syslog(pamh, LOG_DEBUG, "Home directory %s & storage directory %s already exists", pwd->pw_dir, storage);
+            pam_syslog(pamh, LOG_INFO, "Home directory %s & storage directory %s already exists and are ok", pwd->pw_dir, storage);
         }
         return PAM_SUCCESS;
     }
-
-    return create_homes(pamh, &opt, user, &pwd);
+    
+    /* else make things correct */
+    return create_homes(pamh, &opt, (const char *) user, &pwd);
 }
 
 int
