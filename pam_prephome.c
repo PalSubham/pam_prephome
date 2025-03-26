@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include <sys/stat.h>
 #include <pwd.h>
 #include <signal.h>
@@ -126,7 +128,7 @@ create_homes (pam_handle_t *pamh, options_t *opt, const char *user, const struct
     char *storage;
     int home_status, storage_status;
 
-    if ((home_status = (pwd->pw_dir, &St_home)) == 0)
+    if ((home_status = stat(pwd->pw_dir, &St_home)) == 0)
     {
         if (!is_home_ok(pamh, &St_home, pwd, &opt))
         {
@@ -135,10 +137,16 @@ create_homes (pam_handle_t *pamh, options_t *opt, const char *user, const struct
         }
     }
 
+    storage = (char *) malloc(strlen(opt->storage) + strlen(pwd->pw_dir) + 1);
+    if (storage == NULL)
+    {
+        pam_syslog(pamh, LOG_ERR, "Cannot allocate memory for storage directory");
+        return PAM_BUF_ERR;
+    }
     strcpy(storage, opt->storage);
     strcat(storage, pwd->pw_dir);
 
-    if ((storage_status = ((const char *)storage, &St_storage)) == 0)
+    if ((storage_status = stat((const char *)storage, &St_storage)) == 0)
     {
         if (!is_home_ok(pamh, &St_storage, pwd, &opt))
         {
@@ -146,12 +154,14 @@ create_homes (pam_handle_t *pamh, options_t *opt, const char *user, const struct
             return PAM_ERROR_MSG;
         }
     }
+
+    free(storage);
 }
 
 int
 pam_sm_open_session (pam_handle_t *pamh, int flags, int argc, const char **argv)
 {
-    int retval;
+    int retval, creation = 0x00;
     options_t opt;
     void *user;
     struct passwd *pwd;
@@ -177,6 +187,12 @@ pam_sm_open_session (pam_handle_t *pamh, int flags, int argc, const char **argv)
     }
 
     /* stat home and storage directory */
+    storage = (char *) malloc(strlen(opt.storage) + strlen(pwd->pw_dir) + 1);
+    if (storage == NULL)
+    {
+        pam_syslog(pamh, LOG_ERR, "Cannot allocate memory for storage directory");
+        return PAM_BUF_ERR;
+    }
     strcpy(storage, opt.storage);
     strcat(storage, pwd->pw_dir);
 
@@ -188,6 +204,8 @@ pam_sm_open_session (pam_handle_t *pamh, int flags, int argc, const char **argv)
         }
         return PAM_SUCCESS;
     }
+
+    free(storage);
     
     /* else make things correct */
     return create_homes(pamh, &opt, (const char *) user, &pwd);

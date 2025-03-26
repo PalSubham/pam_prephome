@@ -5,8 +5,12 @@
 
 #define UNUSED              __attribute__((unused))
 
-#define PREPHOME_DEBUG      0x01	/* be verbose about things */
-#define PREPHOME_QUIET      0x02	/* keep quiet about things */
+#define PREPHOME_DEBUG      0x01	                        /* be verbose about things */
+#define PREPHOME_QUIET      0x02	                        /* keep quiet about things */
+
+#define CREATE_HOME         0x01                          /* create home */
+#define CREATE_STORAGE      0x02	                        /* create storage */
+#define CREATE_BOTH         (CREATE_HOME|CREATE_STORAGE)  /* create both home & storage */
 
 #define LOGIN_DEFS          "/etc/login.defs"
 #define UMASK_DEFAULT       "0022"
